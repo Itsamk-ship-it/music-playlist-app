@@ -1,0 +1,299 @@
+// ─────────────────────────────────────────────────────────────
+// Music Playlist App — Prisma schema (PostgreSQL)
+// Normalized model with explicit FKs and indexes.
+// ─────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ──────────────────────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum LikeTarget {
+  SONG
+  PLAYLIST
+  COMMENT
+}
+
+enum FavoriteTarget {
+  SONG
+  PLAYLIST
+}
+
+enum NotificationType {
+  FOLLOW
+  LIKE
+  COMMENT
+  PLAYLIST_SHARE
+  SYSTEM
+}
+
+// ── Users ──────────────────────────────────────────────────────
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  username       String   @unique
+  name           String
+  passwordHash   String
+  bio            String?
+  avatarUrl      String?
+  favoriteGenre  String?
+  isPublic       Boolean  @default(true)
+  role           Role     @default(USER)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  playlists      Playlist[]
+  comments       Comment[]
+  likes          Like[]
+  favorites      Favorite[]
+  sessions       Session[]
+  notifications  Notification[] @relation("UserNotifications")
+  actorNotifications Notification[] @relation("ActorNotifications")
+  following      Follow[]       @relation("Follower")
+  followers      Follow[]       @relation("Following")
+  recentlyPlayed RecentlyPlayed[]
+
+  @@index([username])
+  @@index([email])
+  @@map("users")
+}
+
+// Refresh-token / session store (also mirrored in Redis).
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken String   @unique
+  userAgent    String?
+  ip           String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ── Music catalog ──────────────────────────────────────────────
+
+model Genre {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  slug   String  @unique
+  color  String? // hex accent used in the UI
+  songs  Song[]
+
+  @@map("genres")
+}
+
+model Artist {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  bio       String?
+  imageUrl  String?
+  createdAt DateTime @default(now())
+
+  albums Album[]
+  songs  Song[]
+
+  @@index([name])
+  @@map("artists")
+}
+
+model Album {
+  id          String   @id @default(cuid())
+  title       String
+  coverUrl    String?
+  releaseYear Int?
+  artistId    String
+  artist      Artist   @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  songs Song[]
+
+  @@index([artistId])
+  @@index([title])
+  @@map("albums")
+}
+
+model Song {
+  id          String   @id @default(cuid())
+  title       String
+  artistId    String
+  artist      Artist   @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  albumId     String?
+  album       Album?   @relation(fields: [albumId], references: [id], onDelete: SetNull)
+  genreId     String?
+  genre       Genre?   @relation(fields: [genreId], references: [id], onDelete: SetNull)
+  duration    Int // seconds
+  releaseYear Int?
+  coverUrl    String?
+  description String?
+  createdAt   DateTime @default(now())
+
+  playlistSongs  PlaylistSong[]
+  likes          Like[]
+  favorites      Favorite[]
+  recentlyPlayed RecentlyPlayed[]
+
+  @@index([artistId])
+  @@index([albumId])
+  @@index([genreId])
+  @@index([title])
+  @@map("songs")
+}
+
+// ── Playlists ──────────────────────────────────────────────────
+
+model Playlist {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  coverUrl    String?
+  isPublic    Boolean  @default(false)
+  isFeatured  Boolean  @default(false)
+  views       Int      @default(0)
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  songs     PlaylistSong[]
+  comments  Comment[]
+  likes     Like[]
+  favorites Favorite[]
+
+  @@index([ownerId])
+  @@index([isPublic])
+  @@index([isFeatured])
+  @@index([createdAt])
+  @@map("playlists")
+}
+
+// Join table with explicit ordering position.
+model PlaylistSong {
+  id         String   @id @default(cuid())
+  playlistId String
+  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  songId     String
+  song       Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+  position   Int
+  addedAt    DateTime @default(now())
+
+  @@unique([playlistId, songId])
+  @@index([playlistId])
+  @@index([songId])
+  @@map("playlist_songs")
+}
+
+// ── Social ─────────────────────────────────────────────────────
+
+model Comment {
+  id         String   @id @default(cuid())
+  body       String
+  authorId   String
+  author     User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  playlistId String
+  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  likes Like[]
+
+  @@index([playlistId])
+  @@index([authorId])
+  @@map("comments")
+}
+
+// Polymorphic like with real nullable FKs per target type.
+model Like {
+  id         String     @id @default(cuid())
+  userId     String
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  target     LikeTarget
+  songId     String?
+  song       Song?      @relation(fields: [songId], references: [id], onDelete: Cascade)
+  playlistId String?
+  playlist   Playlist?  @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  commentId  String?
+  comment    Comment?   @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  createdAt  DateTime   @default(now())
+
+  @@unique([userId, songId])
+  @@unique([userId, playlistId])
+  @@unique([userId, commentId])
+  @@index([songId])
+  @@index([playlistId])
+  @@index([commentId])
+  @@map("likes")
+}
+
+model Favorite {
+  id         String         @id @default(cuid())
+  userId     String
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  target     FavoriteTarget
+  songId     String?
+  song       Song?          @relation(fields: [songId], references: [id], onDelete: Cascade)
+  playlistId String?
+  playlist   Playlist?      @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  createdAt  DateTime       @default(now())
+
+  @@unique([userId, songId])
+  @@unique([userId, playlistId])
+  @@index([songId])
+  @@index([playlistId])
+  @@map("favorites")
+}
+
+model Follow {
+  id          String   @id @default(cuid())
+  followerId  String
+  follower    User     @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  followingId String
+  following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([followerId, followingId])
+  @@index([followingId])
+  @@map("follows")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String // recipient
+  user      User             @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  actorId   String? // who triggered it
+  actor     User?            @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: SetNull)
+  type      NotificationType
+  message   String
+  link      String?
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([userId, read])
+  @@map("notifications")
+}
+
+model RecentlyPlayed {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  songId    String
+  song      Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+  playedAt  DateTime @default(now())
+
+  @@index([userId, playedAt])
+  @@map("recently_played")
+}
