@@ -1,14 +1,20 @@
 # ── Dependencies ─────────────────────────────────────────────
 FROM node:20-alpine AS deps
 WORKDIR /app
-COPY package*.json ./
-RUN npm install
+COPY package*.json .npmrc ./
+# React 19 + Next 15: some libs still declare React 18 peer ranges. .npmrc sets
+# legacy-peer-deps; the flag is repeated here so the build can't fail on it.
+RUN npm install --legacy-peer-deps
 
 # ── Build ────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
 WORKDIR /app
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# No telemetry network calls during build, and give `next build` enough heap so
+# it doesn't OOM on memory-constrained remote builders (Nexlayer/CI).
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_OPTIONS=--max-old-space-size=4096
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
