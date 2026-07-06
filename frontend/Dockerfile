@@ -2,7 +2,9 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package*.json .npmrc ./
-RUN npm install
+# React 19 + Next 15: some libs still declare React 18 peer ranges. .npmrc sets
+# legacy-peer-deps; the flag is repeated here so the build can't fail on it.
+RUN npm install --legacy-peer-deps
 
 # ── Build ────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
