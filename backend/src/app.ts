@@ -23,6 +23,7 @@ import searchRoutes from './routes/search.routes';
 import dashboardRoutes from './routes/dashboard.routes';
 import notificationRoutes from './routes/notification.routes';
 import healthRoutes from './routes/health.routes';
+import diagRoutes from './routes/diag.routes';
 
 export function createApp() {
   const app = express();
@@ -47,6 +48,7 @@ export function createApp() {
   app.use('/api', globalLimiter);
 
   app.use('/api/health', healthRoutes);
+  app.use('/api/diag', diagRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api/users', userRoutes);
   app.use('/api/songs', songRoutes);

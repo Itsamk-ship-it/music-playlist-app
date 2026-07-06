@@ -2,6 +2,9 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Prisma's query/schema engines need OpenSSL at generate & runtime on Alpine.
+RUN apk add --no-cache openssl
+
 COPY package*.json ./
 RUN npm install
 COPY prisma ./prisma
@@ -15,7 +18,7 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
-RUN apk add --no-cache postgresql-client
+RUN apk add --no-cache postgresql-client openssl
 
 COPY package*.json ./
 # Prod deps + the two CLIs the entrypoint needs (prisma db push, tsx seed).
