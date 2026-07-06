@@ -41,6 +41,13 @@ dead, which is what broke the previous deploy.
    reachable from a browser and the port was wrong. It is browser-facing and baked at
    build time. → `NEXT_PUBLIC_API_URL: <% URL %>/api` (routes to the backend pod via `/api`).
 5. **Single combined image** — replaced with per-service images (see Architecture).
+6. **Missing `path` on backing pods + unsupported `command:`** — `postgres` and `redis`
+   had no `path`, so the deploy yaml-check auto-added `path: /` to each, colliding with the
+   frontend's `/` (three pods on the same route) → Deploy returned an opaque
+   `HTTP 500 — Unknown error` (`deploy_platform`). Every pod needs a UNIQUE path (schema rule),
+   so `postgres → /db` and `redis → /cache`. Also removed `command: redis-server --appendonly yes`
+   — `command:` is not a supported `nexlayer.yaml` field; `redis:7-alpine` runs `redis-server`
+   by default anyway.
 
 ## Frontend build note
 
@@ -91,6 +98,7 @@ application:
         SEED_ON_START: "false"
     - name: postgres
       image: mirror.gcr.io/library/postgres:16-alpine
+      path: /db
       resourceType: statefulset
       servicePorts:
         - 5432
@@ -105,10 +113,10 @@ application:
           mountPath: /var/lib/postgresql/data
     - name: redis
       image: mirror.gcr.io/library/redis:7-alpine
+      path: /cache
       resourceType: statefulset
       servicePorts:
         - 6379
-      command: redis-server --appendonly yes
       volumes:
         - name: redis-data
           size: 1Gi
