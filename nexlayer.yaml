@@ -1,38 +1,67 @@
 application:
   name: soft-eagle-music-playlist-app
+  version: "2.0"
   pods:
-    - name: backend
-      image: "# filled by pipeline:backend"
-      path: /api
-      servicePorts:
-        - 3000
-      vars:
-        CORS_ORIGIN: "http://localhost:3000"
-        DATABASE_URL: "postgresql://app:${POSTGRES_PASSWORD}@postgres.pod:5432/app"
-        JWT_ACCESS_EXPIRES: "15m"
-        JWT_ACCESS_SECRET: "dev_access_secret_change_me"
-        JWT_REFRESH_EXPIRES: "7d"
-        JWT_REFRESH_SECRET: "dev_refresh_secret_change_me"
-        NODE_ENV: "development"
-        PORT: "4000"
-        REDIS_URL: "redis://redis.pod:6379"
-        SEED_ON_START: "false"
+    # ── Frontend (Next.js standalone) — the public web entrypoint ──
     - name: frontend
-      image: "# filled by pipeline:frontend"
+      image: "# filled by pipeline:frontend" # built from ./frontend/Dockerfile
       path: /
       servicePorts:
         - 3000
       vars:
-        API_URL: "http://backend.pod:3000"
-        NEXT_PUBLIC_API_URL: "http://backend.pod:3000"
-        VITE_API_URL: "http://backend.pod:3000"
+        NODE_ENV: "production"
+        PORT: "3000"
+        HOSTNAME: "0.0.0.0"
+        # Browser-facing → MUST be the public URL, not .pod DNS. Baked at build time.
+        NEXT_PUBLIC_API_URL: "<% URL %>/api"
+
+    # ── Backend (Express API) — served under /api on the same URL ──
+    - name: backend
+      image: "# filled by pipeline:backend" # built from ./backend/Dockerfile
+      path: /api
+      servicePorts:
+        - 4000 # app listens on PORT=4000; service port MUST match
+      vars:
+        NODE_ENV: "production"
+        PORT: "4000"
+        # Credentials MUST match the postgres pod below exactly.
+        DATABASE_URL: "postgresql://mpa:mpa_password@postgres.pod:5432/music_playlist?schema=public"
+        REDIS_URL: "redis://redis.pod:6379"
+        CORS_ORIGIN: "<% URL %>"
+        JWT_ACCESS_SECRET: "dev_access_secret_change_me"
+        JWT_REFRESH_SECRET: "dev_refresh_secret_change_me"
+        JWT_ACCESS_EXPIRES: "15m"
+        JWT_REFRESH_EXPIRES: "7d"
+        # false = fast, non-destructive boot (entrypoint still runs `prisma db push`
+        # to create the schema). Set "true" for ONE boot if you want demo data,
+        # then set back to "false" (seed is destructive and slow).
+        SEED_ON_START: "false"
+
+    # ── PostgreSQL ──
     - name: postgres
       image: mirror.gcr.io/library/postgres:16-alpine
+      resourceType: statefulset
       servicePorts:
         - 5432
-      vars: {}
+      vars:
+        POSTGRES_USER: "mpa"
+        POSTGRES_PASSWORD: "mpa_password"
+        POSTGRES_DB: "music_playlist"
+        # PGDATA in a subdir so PostgreSQL init doesn't trip over the volume's lost+found.
+        PGDATA: "/var/lib/postgresql/data/pgdata"
+      volumes:
+        - name: postgres-data
+          size: 10Gi
+          mountPath: /var/lib/postgresql/data
+
+    # ── Redis (cache, sessions, rate limiting) ──
     - name: redis
       image: mirror.gcr.io/library/redis:7-alpine
+      resourceType: statefulset
       servicePorts:
         - 6379
-      vars: {}
+      command: redis-server --appendonly yes
+      volumes:
+        - name: redis-data
+          size: 1Gi
+          mountPath: /data
